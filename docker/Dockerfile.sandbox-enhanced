@@ -1,0 +1,57 @@
+# Enhanced Dify Sandbox with dynamic library management
+FROM langgenius/dify-sandbox:0.2.12
+
+# Install additional system dependencies for enhanced functionality
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3-dev \
+    libopenblas-dev \
+    libgomp1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy enhanced configuration files
+COPY volumes/sandbox/conf/config.yaml /conf/config.yaml
+COPY volumes/sandbox/dependencies/python-requirements.txt /dependencies/python-requirements.txt
+COPY volumes/sandbox/dependencies/node-requirements.txt /dependencies/node-requirements.txt
+
+# Create directories for our enhanced features
+RUN mkdir -p /var/sandbox/sandbox-nodejs/nodejs-project/node_temp/node_modules \
+    && mkdir -p /usr/local/lib/node_modules
+
+# Pre-install Python packages with proper version compatibility
+RUN if [ -f /dependencies/python-requirements.txt ] && [ -s /dependencies/python-requirements.txt ]; then \
+        # First, uninstall any existing numpy/pandas to avoid conflicts \
+        pip3 uninstall -y numpy pandas || true; \
+        # Install packages in order to ensure compatibility \
+        pip3 install --no-cache-dir --upgrade pip; \
+        pip3 install --no-cache-dir -r /dependencies/python-requirements.txt; \
+        # Verify installation \
+        python3 -c "import numpy; print('NumPy version:', numpy.__version__)"; \
+        python3 -c "import pandas; print('Pandas version:', pandas.__version__)"; \
+    fi
+
+# Pre-install Node.js packages if npm is available
+RUN if command -v npm >/dev/null 2>&1 && [ -f /dependencies/node-requirements.txt ] && [ -s /dependencies/node-requirements.txt ]; then \
+        cd /var/sandbox/sandbox-nodejs/nodejs-project/node_temp && \
+        while IFS= read -r package || [ -n "$package" ]; do \
+            if [ -n "$package" ] && [ "${package#\#}" = "$package" ]; then \
+                echo "Installing Node.js package: $package"; \
+                npm install "$package" --save || echo "Failed to install $package, continuing..."; \
+            fi; \
+        done < /dependencies/node-requirements.txt; \
+    fi
+
+# Set proper permissions
+RUN chmod -R 755 /var/sandbox/ \
+    && chmod -R 755 /usr/local/lib/node_modules/ || true
+
+EXPOSE 8194
+
+# Set environment variables to disable seccomp restrictions for testing
+ENV SANDBOX_SECCOMP_DISABLED=true
+ENV SANDBOX_ALLOW_ALL_SYSCALLS=true
+
+# Use the same entrypoint as the base image
+ENTRYPOINT ["/main"]
